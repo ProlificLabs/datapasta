@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ProlificLabs/snowball/x/datapasta"
+	"github.com/ProlificLabs/datapasta"
 	"github.com/stretchr/testify/assert"
 )
 
