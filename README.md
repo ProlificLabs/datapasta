@@ -1,6 +1,10 @@
 ## DataPasta 🍝
 
+Export and import heirarchal objects in a database.
+
 [![golangci-lint](https://github.com/ProlificLabs/datapasta/actions/workflows/golangci-lint.yml/badge.svg?branch=main)](https://github.com/ProlificLabs/datapasta/actions/workflows/golangci-lint.yml)
+
+___
 
 ### Summary
 
