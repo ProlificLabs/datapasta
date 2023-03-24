@@ -11,7 +11,7 @@ permissions:
   # Optional: allow read access to pull request. Use with `only-new-issues` option.
   # pull-requests: read
 jobs:
-  golangci:
+  tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -24,3 +24,5 @@ jobs:
           working-directory: .
           only-new-issues: true
           args: --verbose
+      - run: go test -v ./...
+        working-directory: .
