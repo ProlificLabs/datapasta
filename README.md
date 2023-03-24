@@ -15,27 +15,33 @@ These 2 mechanisms allow for easily downloading an export of a hierarchial struc
 
 ### Example
 
+`main.go`
 ```go
 // c is a connection to a postgres database
 pg, err := datapasta.NewPostgres(ctx, c)
 assert.NoError(err)
+```
 
+`export.go`
+```go
 // we want to export everything about user 50
-    cli, err := pg.NewClient(ctx, c)
-    assert.NoError(err)
+cli, err := pg.NewClient(ctx, c)
+assert.NoError(err)
 
-    // download user id 50 - it will recursively find everything related to the user
-    dl, trace, err := datapasta.DownloadWith(ctx, cli, "user", "id", 50)
-    assert.NoError(err)
-
+// download user id 50 - it will recursively find everything related to the user
+dl, trace, err := datapasta.DownloadWith(ctx, cli, "user", "id", 50)
+assert.NoError(err)
+```
+`import.go`
+```go
 // now upload a copy of that user
-    cli, err := pg.NewClient(ctx, db)
-    assert.NoError(err)
+cli, err := pg.NewClient(ctx, db)
+assert.NoError(err)
 
-    datapasta.UploadWith(ctx, cli, dump)
+datapasta.UploadWith(ctx, cli, dump)
 
-    // return the new id of the user (as postgres provided a new id)
-    return dump[0]["id"].(int32), nil
+// return the new id of the user (as postgres provided a new id)
+return dump[0]["id"].(int32), nil
 ```
 
 ### Export Tips
