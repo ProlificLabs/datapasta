@@ -1,5 +1,7 @@
 ## DataPasta 🍝
 
+[![golangci-lint](https://github.com/ProlificLabs/datapasta/actions/workflows/golangci-lint.yml/badge.svg?branch=main)](https://github.com/ProlificLabs/datapasta/actions/workflows/golangci-lint.yml)
+
 ### Summary
 
 This library provides deep-clone functionality for a database object. It currently has an adapter for Postgres, but custom adapters can be created to satisfy a minimal interface.
