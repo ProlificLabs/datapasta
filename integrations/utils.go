@@ -1,11 +1,16 @@
-package datapasta
+// integrations package houses some utility functions for making or testing database integrations.
+package integrations
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ProlificLabs/datapasta"
+)
 
 // TestDatabaseImplementation is a utility to test an implemention. it just makes sure that 1 row gets cloned correctly.
 // the row you choose as the starting point must have be referenced as a foreign key by some other table.
 // ci is not set up, but this function is one of many tests that run against local postgres for development.
-func TestDatabaseImplementation(t *testing.T, db Database, startTable, startCol string, startVal any) {
+func TestDatabaseImplementation(t *testing.T, db datapasta.Database, startTable, startCol string, startVal any) {
 	// find some interesting columns
 	cols := make(map[string]bool, 0)
 	for _, fk := range db.ForeignKeys() {

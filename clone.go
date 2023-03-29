@@ -7,63 +7,60 @@ import (
 	"strings"
 )
 
-// Database is the abstraction between the cloning tool and the database.
-// The NewPostgres.NewClient method gives you an implementation for Postgres.
-type Database interface {
-	// get foriegn key mapping
-	ForeignKeys() []ForeignKey
-
-	// SelectMatchingRows must return unseen records.
-	// a Database can't be reused between clones, because it must do internal deduping.
-	// `conds` will be a map of columns and the values they can have.
-	SelectMatchingRows(tname string, conds map[string][]any) ([]map[string]any, error)
-
-	// Insert uploads a batch of records.
-	// any changes to the records (such as newly generated primary keys) should mutate the record map directly.
-	// a Destination can't generally be reused between clones, as it may be inside a transaction.
-	// it's recommended that callers use a Database that wraps a transaction.
-	Insert(records ...map[string]any) error
-}
-
 type (
+	// DatabaseDump is the output of a Download call, containing every record that was downloaded.
+	// It is safe to transport as JSON.
 	DatabaseDump []map[string]any
-	Opt          func(map[string]bool)
+
+	// Opt is a functional option that can be passed to Download.
+	Opt          func(*downloadOpts)
 )
 
-type ForeignKey struct {
-	BaseTable        string `json:"base_table"`
-	BaseCol          string `json:"base_col"`
-	ReferencingTable string `json:"referencing_table"`
-	ReferencingCol   string `json:"referencing_col"`
-}
-
+// DontRecurse includes records from `table`, but does not recurse into references to it.
 func DontRecurse(table string) Opt {
-	return func(m map[string]bool) {
-		m["dontrecurse."+table] = true
+	return func(m *downloadOpts) {
+		m.dontRecurse[table] = true
 	}
 }
 
+// DontInclude does not recurse into records from `table`, but still includes referenced records. 
 func DontInclude(table string) Opt {
-	return func(m map[string]bool) {
-		m["dontinclude."+table] = true
+	return func(m *downloadOpts) {
+		m.dontInclude[table] = true
+	}
+}
+
+// LimitSize causes the clone to fail if more than `limit` records have been collected.
+// You should use an estimate of a higher bound for how many records you expect to be exported.
+// The default limit is 0, and 0 is treated as having no limit.
+func LimitSize(limit int) Opt {
+	return func(m *downloadOpts) {
+		m.limit = limit
 	}
 }
 
 const (
-	// we store table and primary key names in the dump, using these keys
-	// because it makes it much easier to transport and clone.
-	// we *could* stop tracking primary key, but it saves some repeated work on the upload.
+	// DumpTableKey is a special field present in every row of an export.
+	// It can be used to determine which table the row is from.
+	// Note that the export may have rows from a table interleaved with rows from other tables.
 	DumpTableKey = "%_tablename"
 )
 
-const MAX_LEN = 50000
+type downloadOpts struct {
+	dontInclude map[string]bool
+	dontRecurse map[string]bool
+	limit int
+}
 
-// DownloadWith recursively downloads a dump of the database from a given starting point.
+// Download recursively downloads a dump of the database from a given starting point.
 // the 2nd return is a trace that can help debug or understand what happened.
-func DownloadWith(ctx context.Context, db Database, startTable, startColumn string, startId any, opts ...Opt) (DatabaseDump, []string, error) {
-	flags := map[string]bool{}
+func Download(ctx context.Context, db Database, startTable, startColumn string, startId any, opts ...Opt) (DatabaseDump, []string, error) {
+	options := downloadOpts{
+		dontInclude: map[string]bool{},
+		dontRecurse: map[string]bool{},
+	}
 	for _, o := range opts {
-		o(flags)
+		o(&options)
 	}
 
 	type searchParams struct {
@@ -80,6 +77,11 @@ func DownloadWith(ctx context.Context, db Database, startTable, startColumn stri
 
 	var recurse func(int) error
 	recurse = func(i int) error {
+		if options.limit != 0 && len(cloneInOrder) >= options.limit {
+			debugging = append(debugging, "hit maximum recursion")
+			return fmt.Errorf("%d export limit exceeded", options.limit)
+		}
+
 		if lookupStatus[lookupQueue[i]] {
 			return nil
 		}
@@ -107,7 +109,7 @@ func DownloadWith(ctx context.Context, db Database, startTable, startColumn stri
 			res[DumpTableKey] = tname
 
 			for _, fk := range fks {
-				if fk.BaseTable != tname || flags["dontrecurse."+fk.BaseTable] {
+				if fk.BaseTable != tname || options.dontRecurse[fk.BaseTable] || options.dontInclude[fk.ReferencingTable]  {
 					continue
 				}
 				// foreign keys pointing to this record can come later
@@ -118,7 +120,7 @@ func DownloadWith(ctx context.Context, db Database, startTable, startColumn stri
 				}
 			}
 			for _, fk := range fks {
-				if fk.ReferencingTable != tname || res[fk.ReferencingCol] == nil || flags["dontinclude."+fk.BaseTable] {
+				if fk.ReferencingTable != tname || res[fk.ReferencingCol] == nil || options.dontInclude[fk.BaseTable] {
 					continue
 				}
 				// foreign keys referenced by this record must be grabbed before this record
@@ -144,17 +146,13 @@ func DownloadWith(ctx context.Context, db Database, startTable, startColumn stri
 		if err := recurse(i); err != nil {
 			return nil, debugging, err
 		}
-		if len(lookupQueue) >= MAX_LEN {
-			debugging = append(debugging, "hit maximum recursion")
-			return nil, debugging, nil
-		}
 	}
 	return cloneInOrder, debugging, nil
 }
 
-// UploadWith uploads, in naive order, every record in a dump.
+// Upload uploads, in naive order, every record in a dump.
 // It mutates the elements of `dump`, so you can track changes (for example new primary keys).
-func UploadWith(ctx context.Context, db Database, dump DatabaseDump) error {
+func Upload(ctx context.Context, db Database, dump DatabaseDump) error {
 	// keep track of old columns and their new values
 	changes := map[string]map[any]any{}
 
