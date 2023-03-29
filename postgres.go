@@ -13,8 +13,8 @@ import (
 )
 
 // NewPostgres returns a pgdb that can generate a Database for datapasta Upload and Download functions.
-func NewPostgres(ctx context.Context, c DBTX) (pgdb, error) {
-	client := Queries{db: c}
+func NewPostgres(ctx context.Context, c Postgreser) (pgdb, error) {
+	client := postgresQueries{db: c}
 	sqlcPKs, err := client.GetPrimaryKeys(ctx)
 	if err != nil {
 		return pgdb{}, err
@@ -25,7 +25,7 @@ func NewPostgres(ctx context.Context, c DBTX) (pgdb, error) {
 		return pgdb{}, err
 	}
 
-	pkGroups := make(map[string]GetPrimaryKeysRow, len(sqlcPKs))
+	pkGroups := make(map[string]getPrimaryKeysRow, len(sqlcPKs))
 	for _, pk := range sqlcPKs {
 		pkGroups[pk.TableName] = pk
 	}
@@ -44,10 +44,8 @@ func NewPostgres(ctx context.Context, c DBTX) (pgdb, error) {
 }
 
 type pgdb struct {
-	// client *pgxpool.Pool
-
 	// figured out from schema
-	pkGroups map[string]GetPrimaryKeysRow
+	pkGroups map[string]getPrimaryKeysRow
 	fks      []ForeignKey
 
 	// squirrel instance to help with stuff
@@ -56,10 +54,10 @@ type pgdb struct {
 
 // NewClient creates a pgtx that can be used as a Database for Upload and Download.
 // it is recommended you pass an open transaction, so you can control committing or rolling it back.
-func (db pgdb) NewClient(ctx context.Context, tx DBTX) (pgtx, error) {
+func (db pgdb) NewClient(ctx context.Context, tx Postgreser) (pgtx, error) {
 	return pgtx{
 		pgdb:           db,
-		tx:             Queries{tx},
+		tx:             postgresQueries{tx},
 		ctx:            ctx,
 		found:          map[string][]any{},
 		foundWithoutPK: map[any]bool{},
@@ -75,7 +73,7 @@ type pgtx struct {
 	ctx context.Context
 
 	// as a destination, we need a tx
-	tx Queries
+	tx postgresQueries
 
 	// as a source, we must not return already-found objects
 	found          map[string][]any
@@ -196,7 +194,9 @@ func (db pgtx) SelectMatchingRows(tname string, conds map[string][]any) ([]map[s
 	return foundInThisScan, nil
 }
 
-type DBTX interface {
+// Postgreser does postgres things.
+// github.com/jackc/pgx/v4/pgxpool.Pool is one such implementation of postgres.
+type Postgreser interface {
 	Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...interface{}) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...interface{}) pgx.Row
@@ -204,8 +204,8 @@ type DBTX interface {
 	SendBatch(context.Context, *pgx.Batch) pgx.BatchResults
 }
 
-type Queries struct {
-	db DBTX
+type postgresQueries struct {
+	db Postgreser
 }
 
 const getForeignKeys = `-- name: GetForeignKeys :many
@@ -217,22 +217,22 @@ SELECT
 FROM pg_catalog.pg_constraint c join pg_catalog.pg_attribute a on c.confrelid=a.attrelid and a.attnum = ANY(confkey)
 `
 
-type GetForeignKeysRow struct {
+type getForeignKeysRow struct {
 	BaseTable        string `json:"base_table"`
 	BaseCol          string `json:"base_col"`
 	ReferencingTable string `json:"referencing_table"`
 	ReferencingCol   string `json:"referencing_col"`
 }
 
-func (q *Queries) GetForeignKeys(ctx context.Context) ([]GetForeignKeysRow, error) {
+func (q *postgresQueries) GetForeignKeys(ctx context.Context) ([]getForeignKeysRow, error) {
 	rows, err := q.db.Query(ctx, getForeignKeys)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetForeignKeysRow
+	var items []getForeignKeysRow
 	for rows.Next() {
-		var i GetForeignKeysRow
+		var i getForeignKeysRow
 		if err := rows.Scan(
 			&i.BaseTable,
 			&i.BaseCol,
@@ -267,20 +267,20 @@ GROUP BY t.relname
 HAVING COUNT(*) = 1
 `
 
-type GetPrimaryKeysRow struct {
+type getPrimaryKeysRow struct {
 	TableName  string `json:"table_name"`
 	ColumnName string `json:"column_name"`
 }
 
-func (q *Queries) GetPrimaryKeys(ctx context.Context) ([]GetPrimaryKeysRow, error) {
+func (q *postgresQueries) GetPrimaryKeys(ctx context.Context) ([]getPrimaryKeysRow, error) {
 	rows, err := q.db.Query(ctx, getPrimaryKeys)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetPrimaryKeysRow
+	var items []getPrimaryKeysRow
 	for rows.Next() {
-		var i GetPrimaryKeysRow
+		var i getPrimaryKeysRow
 		if err := rows.Scan(&i.TableName, &i.ColumnName); err != nil {
 			return nil, err
 		}
