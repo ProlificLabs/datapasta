@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const megacorp = 2127511261
+const largeCompany = 2127511261
 const testCompany = 1296515245
 
 func TestWithLocalPostgres(t *testing.T) {
 	t.Skipf("test is used for development against real pulley schema")
 
-	company := megacorp
+	company := testCompany
 
 	ok := assert.New(t)
 	conn, err := pgxpool.Connect(context.Background(), `postgresql://postgres:postgres@localhost:5432/postgres`)
@@ -42,7 +42,7 @@ func TestWithLocalPostgres(t *testing.T) {
 	}
 
 	startDL := time.Now()
-	res, _, err := DownloadWith(context.Background(), cli, "company", "id", company, exportOpts...)
+	res, _, err := Download(context.Background(), cli, "company", "id", company, exportOpts...)
 	ok.NoError(err)
 	ok.NotEmpty(res)
 	download := time.Since(startDL)
@@ -75,7 +75,7 @@ func TestWithLocalPostgres(t *testing.T) {
 
 	t.Logf("new id: %d", newID)
 
-	newRes, _, err := DownloadWith(context.Background(), cli, "company", "id", newID, exportOpts...)
+	newRes, _, err := Download(context.Background(), cli, "company", "id", newID, exportOpts...)
 	ok.NoError(err)
 	ok.Len(newRes, len(res))
 

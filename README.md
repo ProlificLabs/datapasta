@@ -35,7 +35,7 @@ cli, err := pg.NewClient(ctx, c)
 assert.NoError(err)
 
 // download user id 50 - it will recursively find everything related to the user
-dl, trace, err := datapasta.DownloadWith(ctx, cli, "user", "id", 50)
+dl, trace, err := datapasta.Download(ctx, cli, "user", "id", 50)
 assert.NoError(err)
 ```
 `import.go`
@@ -44,7 +44,7 @@ assert.NoError(err)
 cli, err := pg.NewClient(ctx, db)
 assert.NoError(err)
 
-datapasta.UploadWith(ctx, cli, dump)
+datapasta.Upload(ctx, cli, dump)
 
 // return the new id of the user (as postgres provided a new id)
 return dump[0]["id"].(int32), nil
@@ -65,9 +65,9 @@ purchase (
 
 If we export a `user`, the export will recurse into `purchase`, and then recurse into other `user` records that have made purchases, which will likely clone your entire database!
 
-This can be solved by telling DownloadWith not to recurse out of the `purchase` table, with `datapasta.DontRecurse("purchase")`.
+This can be solved by telling Download not to recurse out of the `purchase` table, with `datapasta.DontRecurse("purchase")`.
 
-This can also be solved by telling DownloadWith not to include the `user` table at all, with `datapasta.DontInclude("purchase")`.
+This can also be solved by telling Download not to include the `user` table at all, with `datapasta.DontInclude("purchase")`.
 
 ### Import Tips
 
