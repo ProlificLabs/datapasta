@@ -1,6 +1,8 @@
 package datapasta
 
-import "testing"
+import (
+	"testing"
+)
 
 // TestDatabaseImplementation is a utility to test an implemention. it just makes sure that 1 row gets cloned correctly.
 // the row you choose as the starting point must have be referenced as a foreign key by some other table.
@@ -28,7 +30,8 @@ func TestDatabaseImplementation(t *testing.T, db Database, startTable, startCol 
 		old[k] = v
 	}
 
-	if err := db.Insert(found[0]); err != nil {
+	fkm := NewForeignKeyMapper(db)
+	if err := db.Insert(fkm, found[0]); err != nil {
 		t.Fatalf("error inserting row: %s", err.Error())
 		return
 	}
@@ -56,3 +59,4 @@ func TestDatabaseImplementation(t *testing.T, db Database, startTable, startCol 
 		return
 	}
 }
+

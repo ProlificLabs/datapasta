@@ -22,7 +22,11 @@ type Database interface {
 	// any changes to the records (such as newly generated primary keys) should mutate the record map directly.
 	// a Destination can't generally be reused between clones, as it may be inside a transaction.
 	// it's recommended that callers use a Database that wraps a transaction.
-	Insert(records ...map[string]any) error
+	Insert(mapper ForeignKeyMapper, records ...map[string]any) error
+}
+
+type BatchDatabase interface {
+
 }
 
 type (
@@ -56,7 +60,7 @@ const (
 	DumpTableKey = "%_tablename"
 )
 
-const MAX_LEN = 50000
+const MAX_LEN = 500000
 
 // DownloadWith recursively downloads a dump of the database from a given starting point.
 // the 2nd return is a trace that can help debug or understand what happened.
@@ -107,7 +111,7 @@ func DownloadWith(ctx context.Context, db Database, startTable, startColumn stri
 			res[DumpTableKey] = tname
 
 			for _, fk := range fks {
-				if fk.BaseTable != tname || flags["dontrecurse."+fk.BaseTable] {
+				if fk.BaseTable != tname || flags["dontrecurse."+fk.BaseTable] || flags["dontinclude."+fk.ReferencingTable]  {
 					continue
 				}
 				// foreign keys pointing to this record can come later
@@ -155,44 +159,53 @@ func DownloadWith(ctx context.Context, db Database, startTable, startColumn stri
 // UploadWith uploads, in naive order, every record in a dump.
 // It mutates the elements of `dump`, so you can track changes (for example new primary keys).
 func UploadWith(ctx context.Context, db Database, dump DatabaseDump) error {
-	// keep track of old columns and their new values
-	changes := map[string]map[any]any{}
-
-	for _, fk := range db.ForeignKeys() {
-		// make sure we track changes on any column that is referenced
-		changes[fk.BaseTable+`.`+fk.BaseCol] = map[any]any{}
+	fkm := NewForeignKeyMapper(db)
+	if err := db.Insert(fkm, dump...); err != nil {
+		return err
 	}
 
-	for _, row := range dump {
-		table := row[DumpTableKey].(string)
-		for k, v := range row {
-			for _, fk := range db.ForeignKeys() {
-				if fk.ReferencingTable != table || fk.ReferencingCol != k || v == nil || changes[fk.BaseTable+`.`+fk.BaseCol] == nil {
-					continue
-				}
+	return nil
+}
 
-				newID, ok := changes[fk.BaseTable+`.`+fk.BaseCol][v]
-				if !ok {
-					log.Printf("unable to find mapped id for %s[%s]=%v in %s", table, k, v, fk.BaseTable)
-				} else {
-					row[k] = newID
-				}
-			}
-		}
+type ForeignKeyMapper func(row map[string]any) func()
 
-		copy := make(map[string]any, len(row))
-		for k, v := range row {
-			// does anyone care about this value?
-			if changes[table+`.`+k] == nil {
+// NewForeignKeyMapper returns a function that will update foreign key references in a row to their new values.
+// each update returns a function that must be called after the row has been updated with new primary keys.
+func NewForeignKeyMapper(db Database) ForeignKeyMapper {
+	changes := make(map[string]map[any]any)
+
+	for _, fk := range db.ForeignKeys() {
+		changes[fk.BaseTable+"."+fk.BaseCol] = map[any]any{}
+	}
+
+	return func(row map[string]any) func() {
+	 table := row[DumpTableKey].(string)
+	for k, v := range row {
+		for _, fk := range db.ForeignKeys() {
+			if fk.ReferencingTable != table || fk.ReferencingCol != k || v == nil || changes[fk.BaseTable+`.`+fk.BaseCol] == nil {
 				continue
 			}
-			copy[k] = v
-		}
 
-		if err := db.Insert(row); err != nil {
-			return err
+			newID, ok := changes[fk.BaseTable+`.`+fk.BaseCol][v]
+			if !ok {
+				log.Printf("unable to find mapped id for %s[%s]=%v in %s", table, k, v, fk.BaseTable)
+			} else {
+				row[k] = newID
+			}
 		}
+	}
 
+	copy := make(map[string]any, len(row))
+	for k, v := range row {
+		// does anyone care about this value?
+		if changes[table+`.`+k] == nil {
+			continue
+		}
+		copy[k] = v
+	}
+
+	return func() {
+		table := row[DumpTableKey].(string)
 		for k, v := range row {
 			if changes[table+"."+k] == nil {
 				continue
@@ -200,6 +213,5 @@ func UploadWith(ctx context.Context, db Database, dump DatabaseDump) error {
 			changes[table+"."+k][copy[k]] = v
 		}
 	}
-
-	return nil
+}
 }
