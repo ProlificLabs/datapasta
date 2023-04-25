@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v4"
 )
 
+const optLogPostgres = false
+
 // NewPostgres returns a pgdb that can generate a Database for datapasta Upload and Download functions.
 func NewPostgres(ctx context.Context, c Postgreser) (pgdb, error) {
 	client := postgresQueries{db: c}
@@ -198,7 +200,6 @@ func (db pgtx) SelectMatchingRows(tname string, conds map[string][]any) ([]map[s
 	return foundInThisScan, nil
 }
 
-
 // NewBatchClient creates a batching client that can be used as a Database for Upload and Download.
 // it is recommended you pass an open transaction, so you can control committing or rolling it back.
 // This client is optimized for Postgres to use a temporary table "datapasta_clone" which allows
@@ -222,7 +223,7 @@ func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
 	if _, err := db.tx.db.Exec(db.ctx, "CREATE TEMPORARY TABLE IF NOT EXISTS datapasta_clone(table_name text, original_id integer, clone_id integer)"); err != nil {
 		return err
 	}
-	
+
 	start := time.Now()
 
 	batch := &pgx.Batch{}
@@ -239,7 +240,7 @@ func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
 		if pk != "" {
 			builder = builder.Suffix("RETURNING " + pk)
 			builder = builder.Prefix("WITH inserted_row AS (")
-		builder = builder.Suffix(") INSERT INTO datapasta_clone (table_name, original_id, clone_id) SELECT ?, ?, id FROM inserted_row", table, oldPK)
+			builder = builder.Suffix(") INSERT INTO datapasta_clone (table_name, original_id, clone_id) SELECT ?, ?, id FROM inserted_row", table, oldPK)
 			delete(row, pk)
 		}
 
@@ -259,7 +260,6 @@ func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
 			vals = append(vals, val)
 		}
 
-		
 		builder = builder.Columns(keys...).Values(vals...)
 		sql, args, err := builder.ToSql()
 		if err != nil {
@@ -279,7 +279,9 @@ func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
 		}
 	}
 
-	log.Printf("prepping: %s, batching: %s", prepped.Sub(start), time.Since(prepped))
+	if optLogPostgres {
+		log.Printf("prepping: %s, batching: %s", prepped.Sub(start), time.Since(prepped))
+	}
 
 	return res.Close()
 }

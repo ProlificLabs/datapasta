@@ -13,7 +13,7 @@ type (
 	DatabaseDump []map[string]any
 
 	// Opt is a functional option that can be passed to Download.
-	Opt          func(*downloadOpts)
+	Opt func(*downloadOpts)
 )
 
 // DontRecurse includes records from `table`, but does not recurse into references to it.
@@ -23,7 +23,7 @@ func DontRecurse(table string) Opt {
 	}
 }
 
-// DontInclude does not recurse into records from `table`, but still includes referenced records. 
+// DontInclude does not recurse into records from `table`, but still includes referenced records.
 func DontInclude(table string) Opt {
 	return func(m *downloadOpts) {
 		m.dontInclude[table] = true
@@ -49,7 +49,7 @@ const (
 type downloadOpts struct {
 	dontInclude map[string]bool
 	dontRecurse map[string]bool
-	limit int
+	limit       int
 }
 
 // Download recursively downloads a dump of the database from a given starting point.
@@ -109,7 +109,7 @@ func Download(ctx context.Context, db Database, startTable, startColumn string, 
 			res[DumpTableKey] = tname
 
 			for _, fk := range fks {
-				if fk.BaseTable != tname || options.dontRecurse[fk.BaseTable] || options.dontInclude[fk.ReferencingTable]  {
+				if fk.BaseTable != tname || options.dontRecurse[fk.BaseTable] || options.dontInclude[fk.ReferencingTable] {
 					continue
 				}
 				// foreign keys pointing to this record can come later
@@ -169,39 +169,39 @@ func NewForeignKeyMapper(db Database) ForeignKeyMapper {
 	}
 
 	return func(row map[string]any) func() {
-	 table := row[DumpTableKey].(string)
-	for k, v := range row {
-		for _, fk := range db.ForeignKeys() {
-			if fk.ReferencingTable != table || fk.ReferencingCol != k || v == nil || changes[fk.BaseTable+`.`+fk.BaseCol] == nil {
-				continue
-			}
-
-			newID, ok := changes[fk.BaseTable+`.`+fk.BaseCol][v]
-			if !ok {
-				log.Printf("unable to find mapped id for %s[%s]=%v in %s", table, k, v, fk.BaseTable)
-			} else {
-				row[k] = newID
-			}
-		}
-	}
-
-	copy := make(map[string]any, len(row))
-	for k, v := range row {
-		// does anyone care about this value?
-		if changes[table+`.`+k] == nil {
-			continue
-		}
-		copy[k] = v
-	}
-
-	return func() {
 		table := row[DumpTableKey].(string)
 		for k, v := range row {
-			if changes[table+"."+k] == nil {
+			for _, fk := range db.ForeignKeys() {
+				if fk.ReferencingTable != table || fk.ReferencingCol != k || v == nil || changes[fk.BaseTable+`.`+fk.BaseCol] == nil {
+					continue
+				}
+
+				newID, ok := changes[fk.BaseTable+`.`+fk.BaseCol][v]
+				if !ok {
+					log.Printf("unable to find mapped id for %s[%s]=%v in %s", table, k, v, fk.BaseTable)
+				} else {
+					row[k] = newID
+				}
+			}
+		}
+
+		copy := make(map[string]any, len(row))
+		for k, v := range row {
+			// does anyone care about this value?
+			if changes[table+`.`+k] == nil {
 				continue
 			}
-			changes[table+"."+k][copy[k]] = v
+			copy[k] = v
+		}
+
+		return func() {
+			table := row[DumpTableKey].(string)
+			for k, v := range row {
+				if changes[table+"."+k] == nil {
+					continue
+				}
+				changes[table+"."+k][copy[k]] = v
+			}
 		}
 	}
-}
 }

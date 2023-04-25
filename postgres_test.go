@@ -36,7 +36,6 @@ func TestWithLocalPostgres(t *testing.T) {
 		DontInclude("user"),
 		DontInclude("firm"),
 		DontRecurse("stakeholder"),
-		DontInclude("vest_event"),
 		DontInclude("sandbox_clone"),
 		DontInclude("sandbox"),
 	}
@@ -50,15 +49,10 @@ func TestWithLocalPostgres(t *testing.T) {
 	for _, row := range res {
 		CleanupRow(row)
 	}
-	
+
 	in, _ := json.Marshal(res)
 	out := make([]map[string]any, 0, len(res))
 	json.Unmarshal(in, &out)
-	
-	// t.Logf("full dump: %s", string(in))
-	// for _, l := range debug {
-	// 	t.Logf("debug: %s", l)
-	// }
 
 	fkm := NewForeignKeyMapper(cli)
 	start := time.Now()
@@ -79,10 +73,8 @@ func TestWithLocalPostgres(t *testing.T) {
 	ok.NoError(err)
 	ok.Len(newRes, len(res))
 
-
 	t.Logf("durations: download(%s), upload(%s)", download, upload)
 }
-
 
 // postgres rows need some pulley-specific cleanup
 func CleanupRow(obj map[string]any) {
