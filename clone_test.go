@@ -66,28 +66,32 @@ func (d testDB) SelectMatchingRows(tname string, conds map[string][]any) ([]map[
 }
 
 // upload a batch of records
-func (d testDB) Insert(records ...map[string]any) error {
-	// test db only handles 1 insert at a time
-	m := records[0]
+func (d testDB) Insert(fkm datapasta.ForeignKeyMapper, records ...map[string]any) error {
+	for _, m := range records {
+		finish := fkm(m)
+		d.Logf("inserting %#v", m)
 
-	d.Logf("inserting %#v", m)
-
-	if m[datapasta.DumpTableKey] == "company" && m["id"] == 10 {
-		if m["api_key"] != "obfuscated" {
-			d.Errorf("didn't obfuscated company 9's api key, got %s", m["api_key"])
+		if m[datapasta.DumpTableKey] == "company" && m["id"] == 10 {
+			if m["api_key"] != "obfuscated" {
+				d.Errorf("didn't obfuscated company 9's api key, got %s", m["api_key"])
+			}
+			m["id"] = 11
+			finish()
+			continue
 		}
-		m["id"] = 11
-		return nil
+		if m[datapasta.DumpTableKey] == "factory" && m["id"] == 23 {
+			m["id"] = 12
+			finish()
+			continue
+		}
+		if m[datapasta.DumpTableKey] == "product" && m["id"] == 5 {
+			m["id"] = 13
+			finish()
+			continue
+		}
+		return fmt.Errorf("unexpected insert: %#v", m)
 	}
-	if m[datapasta.DumpTableKey] == "factory" && m["id"] == 23 {
-		m["id"] = 12
-		return nil
-	}
-	if m[datapasta.DumpTableKey] == "product" && m["id"] == 5 {
-		m["id"] = 13
-		return nil
-	}
-	return fmt.Errorf("unexpected insert: %#v", m)
+	return nil
 }
 
 // get foriegn key mapping

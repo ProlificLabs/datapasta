@@ -33,7 +33,8 @@ func TestDatabaseImplementation(t *testing.T, db datapasta.Database, startTable,
 		old[k] = v
 	}
 
-	if err := db.Insert(found[0]); err != nil {
+	fkm := datapasta.NewForeignKeyMapper(db)
+	if err := db.Insert(fkm, found[0]); err != nil {
 		t.Fatalf("error inserting row: %s", err.Error())
 		return
 	}
@@ -61,3 +62,4 @@ func TestDatabaseImplementation(t *testing.T, db datapasta.Database, startTable,
 		return
 	}
 }
+

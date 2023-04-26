@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 )
+
+const optLogPostgres = false
 
 // NewPostgres returns a pgdb that can generate a Database for datapasta Upload and Download functions.
 func NewPostgres(ctx context.Context, c Postgreser) (pgdb, error) {
@@ -80,8 +83,10 @@ type pgtx struct {
 	foundWithoutPK map[any]bool
 }
 
-func (db pgtx) Insert(rows ...map[string]any) error {
+func (db pgtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
 	for _, row := range rows {
+		finish := fkm(row)
+
 		table := row[DumpTableKey].(string)
 
 		pk := ""
@@ -119,6 +124,7 @@ func (db pgtx) Insert(rows ...map[string]any) error {
 				return fmt.Errorf(`query: %w, args: %s, sql: %s`, err, args, sql)
 			}
 			row[pk] = newPK
+			finish()
 			continue
 		}
 
@@ -192,6 +198,92 @@ func (db pgtx) SelectMatchingRows(tname string, conds map[string][]any) ([]map[s
 		foundInThisScan = append(foundInThisScan, res)
 	}
 	return foundInThisScan, nil
+}
+
+// NewBatchClient creates a batching client that can be used as a Database for Upload and Download.
+// it is recommended you pass an open transaction, so you can control committing or rolling it back.
+// This client is optimized for Postgres to use a temporary table "datapasta_clone" which allows
+// the entire upload to be done without any round trips.
+func (db pgdb) NewBatchClient(ctx context.Context, tx Postgreser) (pgbatchtx, error) {
+	child := pgtx{
+		pgdb:           db,
+		tx:             postgresQueries{tx},
+		ctx:            ctx,
+		found:          map[string][]any{},
+		foundWithoutPK: map[any]bool{},
+	}
+	return pgbatchtx{pgtx: child}, nil
+}
+
+type pgbatchtx struct {
+	pgtx
+}
+
+func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
+	if _, err := db.tx.db.Exec(db.ctx, "CREATE TEMPORARY TABLE IF NOT EXISTS datapasta_clone(table_name text, original_id integer, clone_id integer)"); err != nil {
+		return err
+	}
+
+	start := time.Now()
+
+	batch := &pgx.Batch{}
+	for _, row := range rows {
+		table := row[DumpTableKey].(string)
+
+		pk := ""
+		if pkg, found := db.pkGroups[table]; found {
+			pk = pkg.ColumnName
+		}
+
+		builder := db.builder.Insert(`"` + table + `"`)
+		oldPK := row[pk]
+		if pk != "" {
+			builder = builder.Suffix("RETURNING " + pk)
+			builder = builder.Prefix("WITH inserted_row AS (")
+			builder = builder.Suffix(") INSERT INTO datapasta_clone (table_name, original_id, clone_id) SELECT ?, ?, id FROM inserted_row", table, oldPK)
+			delete(row, pk)
+		}
+
+		keys := make([]string, 0, len(row))
+		vals := make([]any, 0, len(row))
+		for k, v := range row {
+			if k == DumpTableKey {
+				continue
+			}
+			val := any(v)
+			for _, fk := range db.fks {
+				if fk.ReferencingCol == k && fk.ReferencingTable == table {
+					val = squirrel.Expr("COALESCE((SELECT clone_id FROM datapasta_clone WHERE original_id = ? AND table_name = ?::text), ?)", v, fk.BaseTable, v)
+				}
+			}
+			keys = append(keys, fmt.Sprintf(`"%s"`, k))
+			vals = append(vals, val)
+		}
+
+		builder = builder.Columns(keys...).Values(vals...)
+		sql, args, err := builder.ToSql()
+		if err != nil {
+			return fmt.Errorf(`build: %w, args: %s, sql: %s`, err, args, sql)
+		}
+
+		batch.Queue(sql, args...)
+	}
+
+	prepped := time.Now()
+
+	res := db.tx.db.SendBatch(db.ctx, batch)
+	for i := 0; i < batch.Len(); i++ {
+		_, err := res.Exec()
+		if err != nil {
+			return fmt.Errorf(`batch query %d error: %w`, i, err)
+		}
+	}
+
+	if optLogPostgres {
+		log.Printf("prepping: %s, batching: %s", prepped.Sub(start), time.Since(prepped))
+	}
+
+	return res.Close()
 }
 
 // Postgreser does postgres things.

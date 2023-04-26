@@ -13,7 +13,7 @@ type Database interface {
 	// any changes to the records (such as newly generated primary keys) should mutate the record map directly.
 	// a Destination can't generally be reused between clones, as it may be inside a transaction.
 	// it's recommended that callers use a Database that wraps a transaction.
-	Insert(records ...map[string]any) error
+	Insert(mapper ForeignKeyMapper, records ...map[string]any) error
 	
 	// get foriegn key mapping
 	ForeignKeys() []ForeignKey

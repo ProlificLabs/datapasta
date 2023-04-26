@@ -13,7 +13,7 @@ type (
 	DatabaseDump []map[string]any
 
 	// Opt is a functional option that can be passed to Download.
-	Opt          func(*downloadOpts)
+	Opt func(*downloadOpts)
 )
 
 // DontRecurse includes records from `table`, but does not recurse into references to it.
@@ -23,7 +23,7 @@ func DontRecurse(table string) Opt {
 	}
 }
 
-// DontInclude does not recurse into records from `table`, but still includes referenced records. 
+// DontInclude does not recurse into records from `table`, but still includes referenced records.
 func DontInclude(table string) Opt {
 	return func(m *downloadOpts) {
 		m.dontInclude[table] = true
@@ -49,7 +49,7 @@ const (
 type downloadOpts struct {
 	dontInclude map[string]bool
 	dontRecurse map[string]bool
-	limit int
+	limit       int
 }
 
 // Download recursively downloads a dump of the database from a given starting point.
@@ -109,7 +109,7 @@ func Download(ctx context.Context, db Database, startTable, startColumn string, 
 			res[DumpTableKey] = tname
 
 			for _, fk := range fks {
-				if fk.BaseTable != tname || options.dontRecurse[fk.BaseTable] || options.dontInclude[fk.ReferencingTable]  {
+				if fk.BaseTable != tname || options.dontRecurse[fk.BaseTable] || options.dontInclude[fk.ReferencingTable] {
 					continue
 				}
 				// foreign keys pointing to this record can come later
@@ -153,15 +153,22 @@ func Download(ctx context.Context, db Database, startTable, startColumn string, 
 // Upload uploads, in naive order, every record in a dump.
 // It mutates the elements of `dump`, so you can track changes (for example new primary keys).
 func Upload(ctx context.Context, db Database, dump DatabaseDump) error {
-	// keep track of old columns and their new values
-	changes := map[string]map[any]any{}
+	fkm := NewForeignKeyMapper(db)
+	return db.Insert(fkm, dump...)
+}
+
+type ForeignKeyMapper func(row map[string]any) func()
+
+// NewForeignKeyMapper returns a function that will update foreign key references in a row to their new values.
+// each update returns a function that must be called after the row has been updated with new primary keys.
+func NewForeignKeyMapper(db Database) ForeignKeyMapper {
+	changes := make(map[string]map[any]any)
 
 	for _, fk := range db.ForeignKeys() {
-		// make sure we track changes on any column that is referenced
-		changes[fk.BaseTable+`.`+fk.BaseCol] = map[any]any{}
+		changes[fk.BaseTable+"."+fk.BaseCol] = map[any]any{}
 	}
 
-	for _, row := range dump {
+	return func(row map[string]any) func() {
 		table := row[DumpTableKey].(string)
 		for k, v := range row {
 			for _, fk := range db.ForeignKeys() {
@@ -187,17 +194,14 @@ func Upload(ctx context.Context, db Database, dump DatabaseDump) error {
 			copy[k] = v
 		}
 
-		if err := db.Insert(row); err != nil {
-			return err
-		}
-
-		for k, v := range row {
-			if changes[table+"."+k] == nil {
-				continue
+		return func() {
+			table := row[DumpTableKey].(string)
+			for k, v := range row {
+				if changes[table+"."+k] == nil {
+					continue
+				}
+				changes[table+"."+k][copy[k]] = v
 			}
-			changes[table+"."+k][copy[k]] = v
 		}
 	}
-
-	return nil
 }
