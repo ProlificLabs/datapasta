@@ -3,6 +3,8 @@ package datapasta
 import (
 	"context"
 	"encoding/json"
+	"log"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ func TestWithLocalPostgres(t *testing.T) {
 	t.Skipf("test is used for development against real pulley schema")
 
 	company := testCompany
+	log.Println("starting to clone company", company)
 
 	ok := assert.New(t)
 	conn, err := pgxpool.Connect(context.Background(), `postgresql://postgres:postgres@localhost:5432/postgres`)
@@ -48,6 +51,7 @@ func TestWithLocalPostgres(t *testing.T) {
 
 	for _, row := range res {
 		CleanupRow(row)
+		log.Println("cloning", row[DumpTableKey], row["id"])
 	}
 
 	in, _ := json.Marshal(res)
@@ -56,6 +60,8 @@ func TestWithLocalPostgres(t *testing.T) {
 
 	fkm := NewForeignKeyMapper(cli)
 	start := time.Now()
+
+	log.Println("starting to insert company", company)
 	ok.NoError(cli.Insert(fkm, out...))
 	upload := time.Since(start)
 
@@ -69,9 +75,23 @@ func TestWithLocalPostgres(t *testing.T) {
 
 	t.Logf("new id: %d", newID)
 
-	newRes, _, err := Download(context.Background(), cli, "company", "id", newID, exportOpts...)
+	log.Println("starting to download company", newID)
+	newRes, deb, err := Download(context.Background(), cli, "company", "id", newID, exportOpts...)
 	ok.NoError(err)
-	ok.Len(newRes, len(res))
+
+	for _, l := range deb {
+		if !strings.HasSuffix(l, " 0 rows") {
+			t.Logf("debug: %s ... %s", l[:20], l[len(l)-20:])
+		}
+	}
+
+	for _, out := range newRes {
+		if out[DumpTableKey] == "company" {
+			t.Logf("found cloned company %v", out["id"])
+		}
+	}
+
+	ok.Equalf(len(res), len(newRes), "expected clone to have the same size export")
 
 	t.Logf("durations: download(%s), upload(%s)", download, upload)
 }
