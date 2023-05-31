@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v4"
 )
 
-const optLogPostgres = true
+var OptLogPostgres = true
 
 // NewPostgres returns a pgdb that can generate a Database for datapasta Upload and Download functions.
 func NewPostgres(ctx context.Context, c Postgreser) (pgdb, error) {
@@ -250,7 +250,7 @@ func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
 	}
 	fks.Close()
 
-	if optLogPostgres {
+	if OptLogPostgres {
 		log.Printf("prepping: %s, batching: %s", prepped.Sub(start), time.Since(prepped))
 	}
 
