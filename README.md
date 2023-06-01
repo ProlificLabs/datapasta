@@ -67,7 +67,7 @@ If we export a `user`, the export will recurse into `purchase`, and then recurse
 
 This can be solved by telling Download not to recurse out of the `purchase` table, with `datapasta.DontRecurse("purchase")`.
 
-This can also be solved by telling Download not to include the `user` table at all, with `datapasta.DontInclude("purchase")`.
+This can also be solved by telling Download not to include the `purchase` table at all, with `datapasta.DontInclude("purchase")`.
 
 ### Import Tips
 
