@@ -157,6 +157,11 @@ func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
 		return err
 	}
 
+	//clear out the temp table of any rows in case db connection is pooled and reused.
+	if _, err := db.tx.db.Exec(db.ctx, "TRUNCATE datapasta_clone"); err != nil {
+		return err
+	}
+
 	start := time.Now()
 
 	batch := &pgx.Batch{}
