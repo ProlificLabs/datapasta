@@ -74,7 +74,7 @@ type pgtx struct {
 // NewBatchClient creates a batching client that can be used as a Database for Upload and Download.
 // it is recommended you pass an open transaction, so you can control committing or rolling it back.
 // This client is optimized for Postgres to use a temporary table "datapasta_clone" which allows
-// the entire upload to be done without any round trips.
+// the entire upload to be done without any round trips. This table is dropped on commit or rollback.
 func (db pgdb) NewBatchClient(ctx context.Context, tx Postgreser) (pgbatchtx, error) {
 	child := pgtx{
 		pgdb:           db,
@@ -153,7 +153,7 @@ func (db pgbatchtx) SelectMatchingRows(tname string, conds map[string][]any) ([]
 }
 
 func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
-	if _, err := db.tx.db.Exec(db.ctx, "CREATE TEMPORARY TABLE IF NOT EXISTS datapasta_clone(table_name text, original_id integer, clone_id integer)"); err != nil {
+	if _, err := db.tx.db.Exec(db.ctx, "CREATE TEMPORARY TABLE IF NOT EXISTS datapasta_clone(table_name text, original_id integer, clone_id integer) ON COMMIT DROP"); err != nil {
 		return err
 	}
 
