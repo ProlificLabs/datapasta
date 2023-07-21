@@ -33,12 +33,12 @@ func NewPostgres(ctx context.Context, c Postgreser) (pgdb, error) {
 		pkGroups[pk.TableName] = pk
 	}
 
-	builder := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
 	fks := make([]ForeignKey, 0, len(sqlcFKs))
 	for _, fk := range sqlcFKs {
 		fks = append(fks, ForeignKey(fk))
 	}
 
+	builder := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
 	return pgdb{
 		fks:      fks,
 		pkGroups: pkGroups,
@@ -57,6 +57,14 @@ type pgdb struct {
 
 func (db pgdb) ForeignKeys() []ForeignKey {
 	return db.fks
+}
+
+func (db pgdb) PrimaryKeys() map[string]string {
+	out := make(map[string]string)
+	for _, r := range db.pkGroups {
+		out[r.TableName] = r.ColumnName
+	}
+	return out
 }
 
 type pgtx struct {
@@ -152,7 +160,47 @@ func (db pgbatchtx) SelectMatchingRows(tname string, conds map[string][]any) ([]
 	return foundInThisScan, nil
 }
 
-func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
+func (db pgbatchtx) InsertRecord(row map[string]any) (any, error) {
+	keys := make([]string, 0, len(row))
+	vals := make([]any, 0, len(row))
+	table := row[DumpTableKey].(string)
+	builder := db.builder.Insert(`"` + table + `"`)
+	for k, v := range row {
+		if v == nil {
+			continue
+		}
+		if k == DumpTableKey {
+			continue
+		}
+		keys = append(keys, fmt.Sprintf(`"%s"`, k))
+		vals = append(vals, v)
+	}
+
+	builder = builder.Columns(keys...).Values(vals...)
+	sql, args, err := builder.ToSql()
+	if err != nil {
+		return nil, err
+	}
+	var id any
+	if err := db.tx.db.QueryRow(db.ctx, sql, args).Scan(&id); err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
+func (db pgbatchtx) Update(id RecordID, cols map[string]any) error {
+	return nil
+}
+
+func (db pgbatchtx) Delete(id RecordID) error {
+	return nil
+}
+
+func (db pgbatchtx) Mapping() ([]Mapping, error) {
+	return nil, nil
+}
+
+func (db pgbatchtx) Insert(rows ...map[string]any) error {
 	if _, err := db.tx.db.Exec(db.ctx, "CREATE TEMPORARY TABLE IF NOT EXISTS datapasta_clone(table_name text, original_id integer, clone_id integer) ON COMMIT DROP"); err != nil {
 		return err
 	}
