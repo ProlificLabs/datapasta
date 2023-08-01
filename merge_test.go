@@ -1,6 +1,7 @@
 package datapasta
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -345,3 +346,98 @@ func TestGenerateMergeStrategyWithMapping(t *testing.T) {
 	ok.Len(mas[1].Data, 1)
 	ok.Equal(22, mas[1].Data["friend"])
 }
+
+func TestApplyMergeStrategy(t *testing.T) {
+	ok := assert.New(t)
+
+	mapp := []Mapping{
+		{"user", 1, 3},
+		{"user", 2, 4},
+	}
+	db := &mergeDB{T: t, id: 5, data: map[any]map[string]any{}}
+	db.data[1] = map[string]any{"name": "alica", "friend": 2}
+	db.data[2] = map[string]any{"name": "bob"}
+
+	// "alice" (1) is friends with bob (2)
+	// "alica" is cloned to 3
+	// "bob" is cloned to 4
+	// "alica" renames to "alicia" and becomes friends with "jeff" (5)
+	// "bob" is deleted
+
+	mas := []MergeAction{}
+	mas = append(mas, MergeAction{
+		ID:     RecordID{"user", 1},
+		Action: "update",
+		Data:   map[string]any{"name": "alicia", "friend": 5},
+	})
+	mas = append(mas, MergeAction{
+		ID:     RecordID{"user", 5},
+		Action: "create",
+		Data:   map[string]any{"name": "jeff"},
+	})
+	mas = append(mas, MergeAction{
+		ID:     RecordID{"user", 2},
+		Action: "delete",
+	})
+
+	ok.NoError(ApplyMergeStrategy(db, mapp, mas))
+
+	ok.Equal("alicia", db.data[1]["name"])
+	ok.Equal("jeff", db.data[db.data[1]["friend"]]["name"])
+	ok.NotContains(db.data, "bob")
+}
+
+type mergeDB struct {
+	*testing.T
+	id   int
+	data map[any]map[string]any
+}
+
+// get foriegn key mapping
+func (d *mergeDB) ForeignKeys() []ForeignKey {
+	d.Log(`ForeignKeys`)
+	return []ForeignKey{
+		{
+			BaseTable: "user", BaseCol: "id",
+			ReferencingTable: "user", ReferencingCol: "friend",
+		},
+	}
+}
+
+func (d *mergeDB) InsertRecord(i map[string]any) (any, error) {
+	d.Log(`InsertRecord`, i)
+	d.id++
+	d.data[d.id] = i
+	return d.id, nil
+}
+
+func (d *mergeDB) Update(id RecordID, cols map[string]any) error {
+	if _, ok := d.data[id.PrimaryKey]; !ok {
+		return fmt.Errorf(`cant update nonexistant row %s`, id)
+	}
+	for k, v := range cols {
+		d.data[id.PrimaryKey][k] = v
+	}
+	d.Log(`Update`, id, cols)
+	return nil
+}
+
+// delete the row
+func (d *mergeDB) Delete(id RecordID) error {
+	if _, ok := d.data[id.PrimaryKey]; !ok {
+		return fmt.Errorf(`cant delete nonexistant row %s`, id)
+	}
+	d.Log(`Delete`, id)
+	return nil
+}
+
+// stubbed for interface
+
+func (d mergeDB) Mapping() ([]Mapping, error)            { return nil, nil }
+func (d mergeDB) PrimaryKeys() map[string]string         { return nil }
+func (d mergeDB) Insert(records ...map[string]any) error { return nil }
+func (d mergeDB) SelectMatchingRows(tname string, conds map[string][]any) ([]map[string]any, error) {
+	return nil, nil
+}
+
+var _ Database = new(mergeDB)

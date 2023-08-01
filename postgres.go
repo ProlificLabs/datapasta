@@ -189,15 +189,51 @@ func (db pgbatchtx) InsertRecord(row map[string]any) (any, error) {
 }
 
 func (db pgbatchtx) Update(id RecordID, cols map[string]any) error {
+	table := id.Table
+	builder := db.builder.Update(`"` + table + `"`)
+	builder = builder.SetMap(cols).Where(squirrel.Eq{"id": id.PrimaryKey})
+	sql, args, err := builder.ToSql()
+	if err != nil {
+		return err
+	}
+	cmd, err := db.tx.db.Exec(db.ctx, sql, args)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() != 0 {
+		return fmt.Errorf("delete affected %d rows, expected 1", cmd.RowsAffected())
+	}
 	return nil
 }
 
 func (db pgbatchtx) Delete(id RecordID) error {
+	table := id.Table
+	builder := db.builder.Delete(`"` + table + `"`).Where(squirrel.Eq{"id": id.PrimaryKey})
+	builder = builder.Limit(1)
+	sql, args, err := builder.ToSql()
+	if err != nil {
+		return err
+	}
+	cmd, err := db.tx.db.Exec(db.ctx, sql, args)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() != 0 {
+		return fmt.Errorf("delete affected %d rows, expected 1", cmd.RowsAffected())
+	}
 	return nil
 }
 
 func (db pgbatchtx) Mapping() ([]Mapping, error) {
-	return nil, nil
+	rows, err := db.tx.GetMapping(db.ctx)
+	if err != nil {
+		return nil, err
+	}
+	mapps := make([]Mapping, 0, len(rows))
+	for _, r := range rows {
+		mapps = append(mapps, Mapping{TableName: r.TableName, OriginalID: r.OriginalID, NewID: r.CloneID})
+	}
+	return mapps, nil
 }
 
 func (db pgbatchtx) Insert(rows ...map[string]any) error {
@@ -320,6 +356,39 @@ type Postgreser interface {
 
 type postgresQueries struct {
 	db Postgreser
+}
+
+const getMapping = `
+	SELECT table_name, original_id, clone_id FROM datapasta_clone
+`
+
+type getMappingRow struct {
+	TableName           string
+	OriginalID, CloneID int32
+}
+
+func (q *postgresQueries) GetMapping(ctx context.Context) ([]getMappingRow, error) {
+	rows, err := q.db.Query(ctx, getMapping)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []getMappingRow
+	for rows.Next() {
+		var i getMappingRow
+		if err := rows.Scan(
+			&i.TableName,
+			&i.OriginalID,
+			&i.CloneID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getForeignKeys = `-- name: GetForeignKeys :many

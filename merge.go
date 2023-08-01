@@ -1,6 +1,10 @@
 package datapasta
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+	"reflect"
+)
 
 type MergeAction struct {
 	ID     RecordID
@@ -33,9 +37,11 @@ func FindMapping(table string, id any, mapp []Mapping) Mapping {
 			continue
 		}
 		if m.NewID == id {
+			log.Printf(`%s: %T %#v == %T %#v`, table, m.NewID, m.NewID, id, id)
 			return m
 		}
 	}
+	log.Printf("no mapping found for %s (%T %v)", table, id, id)
 	return Mapping{TableName: table, OriginalID: id, NewID: id}
 }
 
@@ -45,6 +51,7 @@ func ReversePrimaryKeyMapping(pks map[string]string, mapp []Mapping, dump Databa
 		table := row[DumpTableKey].(string)
 		pk, hasPk := pks[table]
 		if !hasPk {
+			log.Println("no pk for", table)
 			continue
 		}
 		m := FindMapping(table, row[pk], mapp)
@@ -119,7 +126,7 @@ func FindModifiedRows(pks map[string]string, from, in DatabaseDump) map[RecordID
 
 		changes := make(map[string]any)
 		for k, v := range match {
-			if v != row[k] {
+			if !reflect.DeepEqual(v, row[k]) {
 				changes[k] = row[k]
 			}
 		}
@@ -132,27 +139,46 @@ func FindModifiedRows(pks map[string]string, from, in DatabaseDump) map[RecordID
 	return all
 }
 
-func ApplyMergeStrategy(db Database, mapp []Mapping, dump DatabaseDump, mas []MergeAction) error {
+func ApplyMergeStrategy(db Database, mapp []Mapping, mas []MergeAction) error {
 	fks := db.ForeignKeys()
-	pks := db.PrimaryKeys()
 
 	for _, ma := range mas {
 		if ma.Action != "create" {
 			continue
 		}
+		ma.Data[DumpTableKey] = ma.ID.Table
 		ReverseForeignKeyMappingRow(fks, mapp, ma.Data)
-		origID := ma.Data[pks[ma.ID.Table]]
-		delete(ma.Data, pks[ma.ID.Table])
 		id, err := db.InsertRecord(ma.Data)
 		if err != nil {
-			return err
+			return fmt.Errorf(`creating %s: %s`, ma.ID, err.Error())
 		}
-		mapp = append(mapp, Mapping{TableName: ma.ID.Table, OriginalID: origID, NewID: id})
+		mapp = append(mapp, Mapping{TableName: ma.ID.Table, NewID: ma.ID.PrimaryKey, OriginalID: id})
 	}
 
 	// do all the creates *while* updating the mapping
 	// do all the updates
+	for _, ma := range mas {
+		if ma.Action != "update" {
+			continue
+		}
+		ma.Data[DumpTableKey] = ma.ID.Table
+		ReverseForeignKeyMappingRow(fks, mapp, ma.Data)
+		delete(ma.Data, DumpTableKey)
+		if err := db.Update(ma.ID, ma.Data); err != nil {
+			return fmt.Errorf(`updating %s: %s`, ma.ID, err.Error())
+		}
+	}
+
 	// do the all deletes
+	for _, ma := range mas {
+		if ma.Action != "delete" {
+			continue
+		}
+		if err := db.Delete(ma.ID); err != nil {
+			return fmt.Errorf(`deleting %s: %s`, ma.ID, err.Error())
+		}
+	}
+
 	return nil
 }
 
@@ -173,6 +199,7 @@ func GenerateMergeStrategy(pks map[string]string, base, main, branch DatabaseDum
 	created := FindMissingRows(pks, branch, base)
 	for _, m := range created {
 		id := GetRowIdentifier(pks, m)
+		delete(m, pks[id.Table])
 		out = append(out, MergeAction{id, "create", m})
 	}
 
@@ -192,45 +219,8 @@ func GenerateMergeStrategy(pks map[string]string, base, main, branch DatabaseDum
 			out = append(out, MergeAction{id, "conflict", m})
 			continue
 		}
-		out = append(out, MergeAction{id, "delete", m})
+		out = append(out, MergeAction{id, "delete", nil})
 	}
 
 	return out
 }
-
-// // ThreeWayMerge applies a three way merge to a Diffing interface
-// func ThreeWayMerge(db Diffing, mapp []Mapping, root, main, branch DatabaseDump) (actions MergeAction) {
-// 	// existing definitions:
-// 	// type DatabaseDump []map[string]any
-// 	// type Mapping struct {
-// 	// 	TableName         string
-// 	// 	OriginalID, NewID any
-// 	// }
-// 	// type Diffing interface {
-// 	// 	Insert(table string, record map[string]any) (pk any, err error)
-// 	// 	Update(table string, record map[string]any) error
-// 	// }
-
-// 	// all DatabaseDump rows have an "id" field of type any that is used for finding the old id (unmapping)
-
-// 	// define slice for merge actions
-
-// 	// find new items in branch not in root
-// 	// for each new item:
-// 	//   apply id unmapping to this item
-// 	//   insert it into the db
-// 	//   append new id to mapping
-// 	//   append this change as a nonconflicting change
-// 	// apply id unmapping to everything in branch
-
-// 	// find all modified or deleted items in main
-// 	// find all modified or deleted items in branch
-// 	// for each diff item in branch:
-// 	//   if it exists in the main diff
-// 	//     append this as a conflicting merge actions
-// 	//   otherwise
-// 	//     append this to the merge actions
-// 	//     update the record in the db
-
-// 	// return conflicting and nonconflicting changes
-// }

@@ -146,6 +146,7 @@ func Download(ctx context.Context, db Database, startTable, startColumn string, 
 			return nil, debugging, err
 		}
 	}
+
 	return cloneInOrder, debugging, nil
 }
 

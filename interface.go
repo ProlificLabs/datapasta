@@ -1,6 +1,8 @@
 package datapasta
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Database is the abstraction between the cloning tool and the database.
 // The NewPostgres.NewClient method gives you an implementation for Postgres.
@@ -59,7 +61,10 @@ func (r RecordID) String() string {
 
 func GetRowIdentifier(pks map[string]string, row map[string]any) RecordID {
 	table := row[DumpTableKey].(string)
-	pk := row[pks[table]]
+	pk, ok := row[pks[table]]
+	if !ok {
+		panic("unable to get row identifier")
+	}
 	return RecordID{Table: table, PrimaryKey: pk}
 }
 
