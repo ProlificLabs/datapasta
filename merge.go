@@ -2,8 +2,6 @@ package datapasta
 
 import (
 	"fmt"
-	"log"
-	"reflect"
 )
 
 type MergeAction struct {
@@ -13,36 +11,37 @@ type MergeAction struct {
 }
 
 func (ma MergeAction) String() string {
-	return fmt.Sprintf(`%s %s %#v`, ma.Action, ma.ID, ma.Data)
+	if ma.Action == "delete" {
+		return fmt.Sprintf(`%s %s`, ma.Action, ma.ID)
+	}
+	return fmt.Sprintf(`%s %s %d columns`, ma.Action, ma.ID, len(ma.Data))
 }
 
 func FindRow(table, pk string, id any, dump DatabaseDump) map[string]any {
 	if id == nil {
 		return nil
 	}
+	needle := RecordID{Table: table, PrimaryKey: id}
 	for _, d := range dump {
-		if d[DumpTableKey] != table {
-			continue
-		}
-		if d[pk] == id {
+		test := RecordID{Table: d[DumpTableKey].(string), PrimaryKey: d[pk]}
+		if test.String() == needle.String() {
 			return d
 		}
 	}
 	return nil
 }
 
-func FindMapping(table string, id any, mapp []Mapping) Mapping {
+func FindMapping(id RecordID, mapp []Mapping) Mapping {
+	if id.PrimaryKey == nil {
+		return Mapping{RecordID: id, OriginalID: id.PrimaryKey}
+	}
 	for _, m := range mapp {
-		if m.TableName != table {
-			continue
-		}
-		if m.NewID == id {
-			log.Printf(`%s: %T %#v == %T %#v`, table, m.NewID, m.NewID, id, id)
+		if m.RecordID.String() == id.String() {
 			return m
 		}
 	}
-	log.Printf("no mapping found for %s (%T %v)", table, id, id)
-	return Mapping{TableName: table, OriginalID: id, NewID: id}
+	LogFunc("no mapping found for %s (%T %v)", id.Table, id.PrimaryKey, id.PrimaryKey)
+	return Mapping{RecordID: id, OriginalID: id.PrimaryKey}
 }
 
 // reverse all the primary keys of a dump
@@ -51,10 +50,10 @@ func ReversePrimaryKeyMapping(pks map[string]string, mapp []Mapping, dump Databa
 		table := row[DumpTableKey].(string)
 		pk, hasPk := pks[table]
 		if !hasPk {
-			log.Println("no pk for", table)
+			LogFunc("no pk for %s", table)
 			continue
 		}
-		m := FindMapping(table, row[pk], mapp)
+		m := FindMapping(RecordID{Table: table, PrimaryKey: row[pk]}, mapp)
 		row[pk] = m.OriginalID
 	}
 }
@@ -62,15 +61,9 @@ func ReversePrimaryKeyMapping(pks map[string]string, mapp []Mapping, dump Databa
 // reverse all the foreign keys of an indivdual row
 func ReverseForeignKeyMappingRow(fks []ForeignKey, mapp []Mapping, row map[string]any) {
 	update := func(row map[string]any, col, otherTable string) {
-		for _, m := range mapp {
-			if m.TableName != otherTable {
-				continue
-			}
-			if m.NewID != row[col] {
-				continue
-			}
-			row[col] = m.OriginalID
-		}
+		target := RecordID{Table: otherTable, PrimaryKey: row[col]}
+		m := FindMapping(target, mapp)
+		row[col] = m.OriginalID
 	}
 
 	table := row[DumpTableKey].(string)
@@ -126,7 +119,7 @@ func FindModifiedRows(pks map[string]string, from, in DatabaseDump) map[RecordID
 
 		changes := make(map[string]any)
 		for k, v := range match {
-			if !reflect.DeepEqual(v, row[k]) {
+			if fmt.Sprintf(`%v`, v) != fmt.Sprintf(`%v`, row[k]) {
 				changes[k] = row[k]
 			}
 		}
@@ -152,7 +145,7 @@ func ApplyMergeStrategy(db Database, mapp []Mapping, mas []MergeAction) error {
 		if err != nil {
 			return fmt.Errorf(`creating %s: %s`, ma.ID, err.Error())
 		}
-		mapp = append(mapp, Mapping{TableName: ma.ID.Table, NewID: ma.ID.PrimaryKey, OriginalID: id})
+		mapp = append(mapp, Mapping{RecordID: ma.ID, OriginalID: id})
 	}
 
 	// do all the creates *while* updating the mapping
@@ -187,13 +180,13 @@ func ApplyMergeStrategy(db Database, mapp []Mapping, mas []MergeAction) error {
 func GenerateMergeStrategy(pks map[string]string, base, main, branch DatabaseDump) []MergeAction {
 	out := make([]MergeAction, 0)
 
-	deletedInMain := make(map[RecordID]bool)
+	deletedInMain := make(map[string]bool)
 	for _, deleted := range FindMissingRows(pks, base, main) {
-		deletedInMain[GetRowIdentifier(pks, deleted)] = true
+		deletedInMain[GetRowIdentifier(pks, deleted).String()] = true
 	}
-	editedInMain := make(map[RecordID]bool)
+	editedInMain := make(map[string]bool)
 	for id := range FindModifiedRows(pks, main, base) {
-		editedInMain[id] = true
+		editedInMain[id.String()] = true
 	}
 
 	created := FindMissingRows(pks, branch, base)
@@ -205,8 +198,12 @@ func GenerateMergeStrategy(pks map[string]string, base, main, branch DatabaseDum
 
 	changes := FindModifiedRows(pks, branch, base)
 	for id, c := range changes {
-		if editedInMain[id] || deletedInMain[id] {
-			out = append(out, MergeAction{id, "conflict", c})
+		if editedInMain[id.String()] {
+			out = append(out, MergeAction{id, "conflicting_double_update", c})
+			continue
+		}
+		if deletedInMain[id.String()] {
+			out = append(out, MergeAction{id, "conflicting_update_deleted", c})
 			continue
 		}
 		out = append(out, MergeAction{id, "update", c})
@@ -215,8 +212,8 @@ func GenerateMergeStrategy(pks map[string]string, base, main, branch DatabaseDum
 	deleted := FindMissingRows(pks, base, branch)
 	for _, m := range deleted {
 		id := GetRowIdentifier(pks, m)
-		if editedInMain[id] {
-			out = append(out, MergeAction{id, "conflict", m})
+		if editedInMain[id.String()] {
+			out = append(out, MergeAction{id, "conflict_delete_updated", m})
 			continue
 		}
 		out = append(out, MergeAction{id, "delete", nil})

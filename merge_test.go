@@ -45,7 +45,7 @@ func TestReversePrimaryKeyMapping(t *testing.T) {
 		},
 	}
 	mapp := []Mapping{
-		{TableName: "person", OriginalID: 8, NewID: 11},
+		{RecordID: RecordID{Table: "person", PrimaryKey: 11}, OriginalID: 8},
 	}
 	pks := map[string]string{"person": "id"}
 
@@ -97,7 +97,7 @@ func TestReverseForeignKeyMapping(t *testing.T) {
 	}
 
 	fks := []ForeignKey{{ReferencingTable: "person", ReferencingCol: "country", BaseTable: "country", BaseCol: "id"}}
-	mapp := []Mapping{{TableName: "country", OriginalID: 15, NewID: 20}}
+	mapp := []Mapping{{RecordID: RecordID{Table: "country", PrimaryKey: 20}, OriginalID: 15}}
 
 	ReverseForeignKeyMapping(fks, mapp, main)
 
@@ -315,19 +315,25 @@ func TestGenerateMergeStrategyWithMapping(t *testing.T) {
 	}
 	mapping := []Mapping{
 		{
-			TableName:  "person",
+			RecordID: RecordID{
+				Table:      "person",
+				PrimaryKey: 19,
+			},
 			OriginalID: 9,
-			NewID:      19,
 		},
 		{
-			TableName:  "person",
+			RecordID: RecordID{
+				Table:      "person",
+				PrimaryKey: 20,
+			},
 			OriginalID: 10,
-			NewID:      20,
 		},
 		{
-			TableName:  "person",
+			RecordID: RecordID{
+				Table:      "person",
+				PrimaryKey: 21,
+			},
 			OriginalID: 11,
-			NewID:      21,
 		},
 	}
 
@@ -351,8 +357,8 @@ func TestApplyMergeStrategy(t *testing.T) {
 	ok := assert.New(t)
 
 	mapp := []Mapping{
-		{"user", 1, 3},
-		{"user", 2, 4},
+		{RecordID{"user", 3}, 1},
+		{RecordID{"user", 4}, 2},
 	}
 	db := &mergeDB{T: t, id: 5, data: map[any]map[string]any{}}
 	db.data[1] = map[string]any{"name": "alica", "friend": 2}

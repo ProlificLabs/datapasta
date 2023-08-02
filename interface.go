@@ -2,6 +2,7 @@ package datapasta
 
 import (
 	"fmt"
+	"log"
 )
 
 // Database is the abstraction between the cloning tool and the database.
@@ -69,6 +70,8 @@ func GetRowIdentifier(pks map[string]string, row map[string]any) RecordID {
 }
 
 type Mapping struct {
-	TableName         string
-	OriginalID, NewID any
+	RecordID
+	OriginalID any
 }
+
+var LogFunc = log.Printf

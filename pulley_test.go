@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const runPulleyTests = true
+const runPulleyTests = false
 
 // This file houses tests that run against Pulley schema.
 // TODO: have a docker database to run tests in a schema in datapasta.
@@ -175,12 +175,25 @@ func TestFullProcessWithRealDatabase(t *testing.T) {
 	}
 	mapping, err := cli.Mapping() // Acquire the mapping between old and new Ids
 	ok.NoError(err)
+	cloneID := mapping[0].PrimaryKey
 
 	for _, m := range mapping {
-		log.Printf("mapped %s (%T %v to %T %v)", m.TableName, m.OriginalID, m.OriginalID, m.NewID, m.NewID)
+		log.Printf("mapped %s (%T %v to %T %v)", m.Table, m.OriginalID, m.OriginalID, m.PrimaryKey, m.PrimaryKey)
 	}
 
 	// we can mutate company and clone here to generate merge actions
+	deleteStuff := `DELETE FROM "security" WHERE id IN (SELECT id FROM "security" WHERE company_id=$1 LIMIT 1)`
+	_, deleteErr := tx.Exec(context.Background(), deleteStuff, cloneID)
+	ok.NoError(deleteErr)
+	changeStuff := `UPDATE "security" SET issue_date=NOW() WHERE id IN (SELECT id FROM "security" WHERE company_id=$1 LIMIT 1)`
+	_, changeErr := tx.Exec(context.Background(), changeStuff, cloneID)
+	ok.NoError(changeErr)
+	addStuff := `INSERT INTO "security" (company_id) VALUES ($1)`
+	_, addErr := tx.Exec(context.Background(), addStuff, cloneID)
+	ok.NoError(addErr)
+
+	// here's the juice: given the "initial" snapshot, we can export both the main and sandbox dumps
+	// then use them to generate and apply a 3-way merge changeset
 
 	// Re-download both initial and cloned company
 	connCli2, err := db.NewBatchClient(context.Background(), conn) // New client for this download
@@ -189,10 +202,15 @@ func TestFullProcessWithRealDatabase(t *testing.T) {
 	ok.NoError(err)
 	ok.NotEmpty(currentCompany)
 
+	// cleanup the current company so that the prior cleanup doesnt count as conflicts
+	for _, row := range currentCompany {
+		CleanupRow(row)
+	}
+
 	// get the clone using the tx
 	connCli3, err := db.NewBatchClient(context.Background(), tx) // New client for this download
 	ok.NoError(err)
-	clonedCompany, _, err := Download(context.Background(), connCli3, "company", "id", mapping[0].NewID, exportOpts...)
+	clonedCompany, _, err := Download(context.Background(), connCli3, "company", "id", cloneID, exportOpts...)
 	ok.NoError(err)
 	ok.NotEmpty(clonedCompany)
 
@@ -200,21 +218,16 @@ func TestFullProcessWithRealDatabase(t *testing.T) {
 
 	ReverseForeignKeyMapping(db.ForeignKeys(), mapping, clonedCompany)
 	ReversePrimaryKeyMapping(db.PrimaryKeys(), mapping, clonedCompany)
-	t.Logf(`after mapping: %#v`, clonedCompany[0])
-	t.Logf(`previously: %#v`, initial[0])
-	t.Logf(`currently: %#v`, currentCompany[0])
-
-	t.Logf(`after mapping: %T`, clonedCompany[0]["id"])
-	t.Logf(`previously: %T`, initial[0]["id"])
-	t.Logf(`currently: %T`, currentCompany[0]["id"])
 
 	mas := GenerateMergeStrategy(db.PrimaryKeys(), initial, currentCompany, clonedCompany)
-	ok.Empty(mas)
 
-	if len(mas) > 5 {
-		for _, ma := range mas[:5] {
-			t.Log("merge action:", ma)
-		}
-
+	actions := map[string]bool{}
+	for _, ma := range mas {
+		actions[ma.Action] = true
+		t.Log("merge action:", ma)
 	}
+	ok.Equal(map[string]bool{"create": true, "delete": true, "update": true}, actions)
+
+	mergeErr := ApplyMergeStrategy(connCli3, mapping, mas)
+	ok.NoError(mergeErr)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/Masterminds/squirrel"
@@ -12,8 +11,6 @@ import (
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 )
-
-var OptLogPostgres = true
 
 // NewPostgres returns a pgdb that can generate a Database for datapasta Upload and Download functions.
 func NewPostgres(ctx context.Context, c Postgreser) (pgdb, error) {
@@ -164,7 +161,7 @@ func (db pgbatchtx) InsertRecord(row map[string]any) (any, error) {
 	keys := make([]string, 0, len(row))
 	vals := make([]any, 0, len(row))
 	table := row[DumpTableKey].(string)
-	builder := db.builder.Insert(`"` + table + `"`)
+	builder := db.builder.Insert(`"` + table + `"`).Suffix("RETURNING id")
 	for k, v := range row {
 		if v == nil {
 			continue
@@ -182,7 +179,7 @@ func (db pgbatchtx) InsertRecord(row map[string]any) (any, error) {
 		return nil, err
 	}
 	var id any
-	if err := db.tx.db.QueryRow(db.ctx, sql, args).Scan(&id); err != nil {
+	if err := db.tx.db.QueryRow(db.ctx, sql, args...).Scan(&id); err != nil {
 		return nil, err
 	}
 	return id, nil
@@ -196,12 +193,12 @@ func (db pgbatchtx) Update(id RecordID, cols map[string]any) error {
 	if err != nil {
 		return err
 	}
-	cmd, err := db.tx.db.Exec(db.ctx, sql, args)
+	cmd, err := db.tx.db.Exec(db.ctx, sql, args...)
 	if err != nil {
 		return err
 	}
-	if cmd.RowsAffected() != 0 {
-		return fmt.Errorf("delete affected %d rows, expected 1", cmd.RowsAffected())
+	if cmd.RowsAffected() != 1 {
+		return fmt.Errorf("update affected %d rows, expected 1", cmd.RowsAffected())
 	}
 	return nil
 }
@@ -209,17 +206,16 @@ func (db pgbatchtx) Update(id RecordID, cols map[string]any) error {
 func (db pgbatchtx) Delete(id RecordID) error {
 	table := id.Table
 	builder := db.builder.Delete(`"` + table + `"`).Where(squirrel.Eq{"id": id.PrimaryKey})
-	builder = builder.Limit(1)
 	sql, args, err := builder.ToSql()
 	if err != nil {
 		return err
 	}
-	cmd, err := db.tx.db.Exec(db.ctx, sql, args)
+	cmd, err := db.tx.db.Exec(db.ctx, sql, args...)
 	if err != nil {
 		return err
 	}
-	if cmd.RowsAffected() != 0 {
-		return fmt.Errorf("delete affected %d rows, expected 1", cmd.RowsAffected())
+	if cmd.RowsAffected() > 1 {
+		return fmt.Errorf("delete affected %d rows, expected 0 or 1", cmd.RowsAffected())
 	}
 	return nil
 }
@@ -231,7 +227,7 @@ func (db pgbatchtx) Mapping() ([]Mapping, error) {
 	}
 	mapps := make([]Mapping, 0, len(rows))
 	for _, r := range rows {
-		mapps = append(mapps, Mapping{TableName: r.TableName, OriginalID: r.OriginalID, NewID: r.CloneID})
+		mapps = append(mapps, Mapping{RecordID: RecordID{Table: r.TableName, PrimaryKey: r.CloneID}, OriginalID: r.OriginalID})
 	}
 	return mapps, nil
 }
@@ -312,7 +308,7 @@ func (db pgbatchtx) Insert(rows ...map[string]any) error {
 	}
 
 	prepped := time.Now()
-	log.Printf("batchrows:%d, followups:%d", batch.Len(), followup.Len())
+	LogFunc("batchrows:%d, followups:%d", batch.Len(), followup.Len())
 
 	res := db.tx.db.SendBatch(db.ctx, batch)
 	for i := 0; i < batch.Len(); i++ {
@@ -334,9 +330,7 @@ func (db pgbatchtx) Insert(rows ...map[string]any) error {
 	}
 	fks.Close()
 
-	if OptLogPostgres {
-		log.Printf("prepping: %s, batching: %s", prepped.Sub(start), time.Since(prepped))
-	}
+	LogFunc("prepping: %s, batching: %s", prepped.Sub(start), time.Since(prepped))
 
 	if err := res.Close(); err != nil {
 		return fmt.Errorf("failed to execute batch followup queries: %w", err)
