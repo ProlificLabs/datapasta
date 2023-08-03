@@ -3,7 +3,6 @@ package datapasta
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -147,61 +146,12 @@ func Download(ctx context.Context, db Database, startTable, startColumn string, 
 			return nil, debugging, err
 		}
 	}
+
 	return cloneInOrder, debugging, nil
 }
 
 // Upload uploads, in naive order, every record in a dump.
 // It mutates the elements of `dump`, so you can track changes (for example new primary keys).
 func Upload(ctx context.Context, db Database, dump DatabaseDump) error {
-	fkm := NewForeignKeyMapper(db)
-	return db.Insert(fkm, dump...)
-}
-
-type ForeignKeyMapper func(row map[string]any) func()
-
-// NewForeignKeyMapper returns a function that will update foreign key references in a row to their new values.
-// each update returns a function that must be called after the row has been updated with new primary keys.
-func NewForeignKeyMapper(db Database) ForeignKeyMapper {
-	changes := make(map[string]map[any]any)
-
-	for _, fk := range db.ForeignKeys() {
-		changes[fk.BaseTable+"."+fk.BaseCol] = map[any]any{}
-	}
-
-	return func(row map[string]any) func() {
-		table := row[DumpTableKey].(string)
-		for k, v := range row {
-			for _, fk := range db.ForeignKeys() {
-				if fk.ReferencingTable != table || fk.ReferencingCol != k || v == nil || changes[fk.BaseTable+`.`+fk.BaseCol] == nil {
-					continue
-				}
-
-				newID, ok := changes[fk.BaseTable+`.`+fk.BaseCol][v]
-				if !ok {
-					log.Printf("unable to find mapped id for %s[%s]=%v in %s", table, k, v, fk.BaseTable)
-				} else {
-					row[k] = newID
-				}
-			}
-		}
-
-		copy := make(map[string]any, len(row))
-		for k, v := range row {
-			// does anyone care about this value?
-			if changes[table+`.`+k] == nil {
-				continue
-			}
-			copy[k] = v
-		}
-
-		return func() {
-			table := row[DumpTableKey].(string)
-			for k, v := range row {
-				if changes[table+"."+k] == nil {
-					continue
-				}
-				changes[table+"."+k][copy[k]] = v
-			}
-		}
-	}
+	return db.Insert(dump...)
 }

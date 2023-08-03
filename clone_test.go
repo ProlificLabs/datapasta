@@ -65,10 +65,23 @@ func (d testDB) SelectMatchingRows(tname string, conds map[string][]any) ([]map[
 	return nil, fmt.Errorf("no mock for %s where %#v", tname, conds)
 }
 
+func (d testDB) PrimaryKeys() map[string]string {
+	return nil
+}
+
+func (d testDB) InsertRecord(map[string]any) (any, error) { return nil, nil }
+
+// apply the updates from the cols to the row
+func (d testDB) Update(id datapasta.RecordID, cols map[string]any) error { return nil }
+
+// delete the row
+func (d testDB) Delete(id datapasta.RecordID) error { return nil }
+
+func (d testDB) Mapping() ([]datapasta.Mapping, error) { return nil, nil }
+
 // upload a batch of records
-func (d testDB) Insert(fkm datapasta.ForeignKeyMapper, records ...map[string]any) error {
+func (d testDB) Insert(records ...map[string]any) error {
 	for _, m := range records {
-		finish := fkm(m)
 		d.Logf("inserting %#v", m)
 
 		if m[datapasta.DumpTableKey] == "company" && m["id"] == 10 {
@@ -76,17 +89,14 @@ func (d testDB) Insert(fkm datapasta.ForeignKeyMapper, records ...map[string]any
 				d.Errorf("didn't obfuscated company 9's api key, got %s", m["api_key"])
 			}
 			m["id"] = 11
-			finish()
 			continue
 		}
 		if m[datapasta.DumpTableKey] == "factory" && m["id"] == 23 {
 			m["id"] = 12
-			finish()
 			continue
 		}
 		if m[datapasta.DumpTableKey] == "product" && m["id"] == 5 {
 			m["id"] = 13
-			finish()
 			continue
 		}
 		return fmt.Errorf("unexpected insert: %#v", m)

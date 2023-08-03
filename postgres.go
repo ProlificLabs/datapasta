@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/Masterminds/squirrel"
@@ -12,8 +11,6 @@ import (
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 )
-
-var OptLogPostgres = true
 
 // NewPostgres returns a pgdb that can generate a Database for datapasta Upload and Download functions.
 func NewPostgres(ctx context.Context, c Postgreser) (pgdb, error) {
@@ -33,12 +30,12 @@ func NewPostgres(ctx context.Context, c Postgreser) (pgdb, error) {
 		pkGroups[pk.TableName] = pk
 	}
 
-	builder := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
 	fks := make([]ForeignKey, 0, len(sqlcFKs))
 	for _, fk := range sqlcFKs {
 		fks = append(fks, ForeignKey(fk))
 	}
 
+	builder := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
 	return pgdb{
 		fks:      fks,
 		pkGroups: pkGroups,
@@ -57,6 +54,14 @@ type pgdb struct {
 
 func (db pgdb) ForeignKeys() []ForeignKey {
 	return db.fks
+}
+
+func (db pgdb) PrimaryKeys() map[string]string {
+	out := make(map[string]string)
+	for _, r := range db.pkGroups {
+		out[r.TableName] = r.ColumnName
+	}
+	return out
 }
 
 type pgtx struct {
@@ -152,7 +157,82 @@ func (db pgbatchtx) SelectMatchingRows(tname string, conds map[string][]any) ([]
 	return foundInThisScan, nil
 }
 
-func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
+func (db pgbatchtx) InsertRecord(row map[string]any) (any, error) {
+	keys := make([]string, 0, len(row))
+	vals := make([]any, 0, len(row))
+	table := row[DumpTableKey].(string)
+	builder := db.builder.Insert(`"` + table + `"`).Suffix("RETURNING id")
+	for k, v := range row {
+		if v == nil {
+			continue
+		}
+		if k == DumpTableKey {
+			continue
+		}
+		keys = append(keys, fmt.Sprintf(`"%s"`, k))
+		vals = append(vals, v)
+	}
+
+	builder = builder.Columns(keys...).Values(vals...)
+	sql, args, err := builder.ToSql()
+	if err != nil {
+		return nil, err
+	}
+	var id any
+	if err := db.tx.db.QueryRow(db.ctx, sql, args...).Scan(&id); err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
+func (db pgbatchtx) Update(id RecordID, cols map[string]any) error {
+	table := id.Table
+	builder := db.builder.Update(`"` + table + `"`)
+	builder = builder.SetMap(cols).Where(squirrel.Eq{"id": id.PrimaryKey})
+	sql, args, err := builder.ToSql()
+	if err != nil {
+		return err
+	}
+	cmd, err := db.tx.db.Exec(db.ctx, sql, args...)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() != 1 {
+		return fmt.Errorf("update affected %d rows, expected 1", cmd.RowsAffected())
+	}
+	return nil
+}
+
+func (db pgbatchtx) Delete(id RecordID) error {
+	table := id.Table
+	builder := db.builder.Delete(`"` + table + `"`).Where(squirrel.Eq{"id": id.PrimaryKey})
+	sql, args, err := builder.ToSql()
+	if err != nil {
+		return err
+	}
+	cmd, err := db.tx.db.Exec(db.ctx, sql, args...)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() > 1 {
+		return fmt.Errorf("delete affected %d rows, expected 0 or 1", cmd.RowsAffected())
+	}
+	return nil
+}
+
+func (db pgbatchtx) Mapping() ([]Mapping, error) {
+	rows, err := db.tx.GetMapping(db.ctx)
+	if err != nil {
+		return nil, err
+	}
+	mapps := make([]Mapping, 0, len(rows))
+	for _, r := range rows {
+		mapps = append(mapps, Mapping{RecordID: RecordID{Table: r.TableName, PrimaryKey: r.CloneID}, OriginalID: r.OriginalID})
+	}
+	return mapps, nil
+}
+
+func (db pgbatchtx) Insert(rows ...map[string]any) error {
 	if _, err := db.tx.db.Exec(db.ctx, "CREATE TEMPORARY TABLE IF NOT EXISTS datapasta_clone(table_name text, original_id integer, clone_id integer) ON COMMIT DROP"); err != nil {
 		return err
 	}
@@ -228,7 +308,7 @@ func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
 	}
 
 	prepped := time.Now()
-	log.Printf("batchrows:%d, followups:%d", batch.Len(), followup.Len())
+	LogFunc("batchrows:%d, followups:%d", batch.Len(), followup.Len())
 
 	res := db.tx.db.SendBatch(db.ctx, batch)
 	for i := 0; i < batch.Len(); i++ {
@@ -250,9 +330,7 @@ func (db pgbatchtx) Insert(fkm ForeignKeyMapper, rows ...map[string]any) error {
 	}
 	fks.Close()
 
-	if OptLogPostgres {
-		log.Printf("prepping: %s, batching: %s", prepped.Sub(start), time.Since(prepped))
-	}
+	LogFunc("prepping: %s, batching: %s", prepped.Sub(start), time.Since(prepped))
 
 	if err := res.Close(); err != nil {
 		return fmt.Errorf("failed to execute batch followup queries: %w", err)
@@ -272,6 +350,39 @@ type Postgreser interface {
 
 type postgresQueries struct {
 	db Postgreser
+}
+
+const getMapping = `
+	SELECT table_name, original_id, clone_id FROM datapasta_clone
+`
+
+type getMappingRow struct {
+	TableName           string
+	OriginalID, CloneID int32
+}
+
+func (q *postgresQueries) GetMapping(ctx context.Context) ([]getMappingRow, error) {
+	rows, err := q.db.Query(ctx, getMapping)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []getMappingRow
+	for rows.Next() {
+		var i getMappingRow
+		if err := rows.Scan(
+			&i.TableName,
+			&i.OriginalID,
+			&i.CloneID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getForeignKeys = `-- name: GetForeignKeys :many
