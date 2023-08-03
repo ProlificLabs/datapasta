@@ -249,14 +249,11 @@ func TestGenerateMergeStrategy(t *testing.T) {
 	ok.Equal("create", actions[0].Action)
 	ok.Equal(16, actions[0].ID.PrimaryKey)
 
-	ok.Equal("update", actions[1].Action)
-	ok.Equal(12, actions[1].ID.PrimaryKey)
-
-	ok.Contains(actions, MergeAction{ID: RecordID{Table: "person", PrimaryKey: 20}, Action: "conflict", Data: map[string]interface{}{"name": "updated_both_complete_branch"}})
+	ok.Contains(actions, MergeAction{ID: RecordID{Table: "person", PrimaryKey: 20}, Action: "conflicting_double_update", Data: map[string]interface{}{"name": "updated_both_complete_branch"}})
 	ok.Contains(actions, MergeAction{ID: RecordID{Table: "person", PrimaryKey: 12}, Action: "update", Data: map[string]interface{}{"name": "name_changed_in_branch_completed"}})
-	ok.Contains(actions, MergeAction{ID: RecordID{Table: "person", PrimaryKey: 20}, Action: "conflict", Data: map[string]interface{}{"name": "updated_both_complete_branch"}})
+	ok.Contains(actions, MergeAction{ID: RecordID{Table: "person", PrimaryKey: 20}, Action: "conflicting_double_update", Data: map[string]interface{}{"name": "updated_both_complete_branch"}})
 
-	ok.Equal("conflict", actions[5].Action)
+	ok.Equal("conflict_delete_updated", actions[5].Action)
 	ok.Equal(18, actions[5].ID.PrimaryKey)
 
 	ok.Equal("delete", actions[6].Action)
