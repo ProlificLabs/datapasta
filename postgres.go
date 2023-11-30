@@ -252,7 +252,7 @@ func (db pgbatchtx) Insert(rows ...map[string]any) error {
 		builder := db.builder.Insert(`"` + table + `"`)
 		oldPK := row[pk]
 		if pk != "" {
-			builder = builder.Suffix("RETURNING " + pk)
+			builder = builder.Suffix("RETURNING " + pk + " as id")
 			builder = builder.Prefix("WITH inserted_row AS (")
 			builder = builder.Suffix(") INSERT INTO datapasta_clone (table_name, original_id, clone_id) SELECT ?, ?, id FROM inserted_row", table, oldPK)
 			delete(row, pk)
