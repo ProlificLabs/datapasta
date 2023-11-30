@@ -255,7 +255,7 @@ func (db pgbatchtx) Insert(rows ...map[string]any) error {
 			builder = builder.Suffix("RETURNING " + pk + " as id")
 			builder = builder.Prefix("WITH inserted_row AS (")
 			builder = builder.Suffix(") INSERT INTO datapasta_clone (table_name, original_id, clone_id) SELECT ?, ?, id FROM inserted_row", table, oldPK)
-			delete(row, pk)
+			//delete(row, pk)
 		}
 
 		keys := make([]string, 0, len(row))
@@ -268,8 +268,11 @@ func (db pgbatchtx) Insert(rows ...map[string]any) error {
 				continue
 			}
 			deferred := false
+			foundForeign := false
 			for _, fk := range db.fks {
+
 				if fk.ReferencingCol == k && fk.ReferencingTable == table {
+					foundForeign = true
 					findInMap := squirrel.Expr("COALESCE((SELECT clone_id FROM datapasta_clone WHERE original_id = ? AND table_name = ?::text), ?)", v, fk.BaseTable, v)
 
 					if fk.BaseTable == table {
@@ -278,7 +281,7 @@ func (db pgbatchtx) Insert(rows ...map[string]any) error {
 							return fmt.Errorf("can't have self-referencing tables without primary key")
 						}
 						deferred = true
-						builder := db.builder.Update(`"`+table+`"`).Set(k, findInMap).Where("id=(SELECT clone_id FROM datapasta_clone WHERE original_id = ? AND table_name = ?::text)", oldPK, fk.BaseTable)
+						builder := db.builder.Update(`"`+table+`"`).Set(k, findInMap).Where(pk+"=(SELECT clone_id FROM datapasta_clone WHERE original_id = ? AND table_name = ?::text)", oldPK, fk.BaseTable)
 						sql, args, err := builder.ToSql()
 						if err != nil {
 							return fmt.Errorf(`build: %w, args: %s, sql: %s`, err, args, sql)
@@ -294,8 +297,10 @@ func (db pgbatchtx) Insert(rows ...map[string]any) error {
 			if deferred {
 				continue
 			}
-			keys = append(keys, fmt.Sprintf(`"%s"`, k))
-			vals = append(vals, v)
+			if foundForeign || k != pk {
+				keys = append(keys, fmt.Sprintf(`"%s"`, k))
+				vals = append(vals, v)
+			}
 		}
 
 		builder = builder.Columns(keys...).Values(vals...)
