@@ -18,6 +18,7 @@ func TestDownloadUpload(t *testing.T) {
 	assert.Equal(10, res[0]["id"])
 	assert.Equal("produces socks", res[1]["desc"])
 	assert.Equal("socks", res[2]["name"])
+	assert.Equal("socks are cool", res[3]["detail"])
 
 	// users are expected to do some cleanup, so test that it works
 	for _, row := range res {
@@ -29,6 +30,7 @@ func TestDownloadUpload(t *testing.T) {
 	assert.Equal(11, res[0]["id"])
 	assert.Equal(12, res[1]["id"])
 	assert.Equal(13, res[2]["id"])
+	assert.Equal(11, res[3]["company_id"])
 }
 
 func cleanup(row map[string]any) {
@@ -59,6 +61,10 @@ func (d testDB) SelectMatchingRows(tname string, conds map[string][]any) ([]map[
 	case "factory":
 		if conds["id"][0] == 23 {
 			return []map[string]any{{"id": 23, "desc": "produces socks"}}, nil
+		}
+	case "company_details":
+		if conds["company_id"][0] == 10 {
+			return []map[string]any{{"company_id": 10, "detail": "socks are cool"}}, nil
 		}
 	}
 
@@ -99,6 +105,10 @@ func (d testDB) Insert(records ...map[string]any) error {
 			m["id"] = 13
 			continue
 		}
+		if m[datapasta.DumpTableKey] == "company_details" && m["company_id"] == 10 {
+			m["company_id"] = 11
+			continue
+		}
 		return fmt.Errorf("unexpected insert: %#v", m)
 	}
 	return nil
@@ -114,6 +124,10 @@ func (d testDB) ForeignKeys() []datapasta.ForeignKey {
 		{
 			BaseTable: "factory", BaseCol: "id",
 			ReferencingTable: "product", ReferencingCol: "factory_id",
+		},
+		{
+			BaseTable: "company", BaseCol: "id",
+			ReferencingTable: "company_details", ReferencingCol: "company_id",
 		},
 	}
 }
