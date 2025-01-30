@@ -237,6 +237,10 @@ func (db pgbatchtx) Insert(rows ...map[string]any) error {
 		return err
 	}
 
+	if _, err := db.tx.db.Exec(db.ctx, "CREATE INDEX ON datapasta_clone(table_name,original_id, clone_id)"); err != nil {
+		return err
+	}
+
 	start := time.Now()
 
 	batch := &pgx.Batch{}
